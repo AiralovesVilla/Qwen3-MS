@@ -12,4 +12,4 @@ model_dir = snapshot_download("Qwen/Qwen3-0.6B", cache_dir=cache_path, revision=
 
 # Transformers加载模型权重
 tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=False, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(model_dir, device_map="auto", torch_dtype=torch.bfloat16)
+model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.bfloat16, trust_remote_code=True)
