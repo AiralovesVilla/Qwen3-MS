@@ -2,21 +2,27 @@ import json
 import pandas as pd
 import torch
 from datasets import Dataset
-from modelscope import snapshot_download, AutoTokenizer
-from transformers import AutoModelForCausalLM, TrainingArguments, Trainer, DataCollatorForSeq2Seq
+from modelscope import snapshot_download
+from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer, DataCollatorForSeq2Seq
 from peft import LoraConfig, TaskType, get_peft_model
 import os
 import swanlab
+from swanlab.package import has_api_key
 
 os.environ["SWANLAB_PROJECT"]="qwen3-sft-medical"
 PROMPT = "你是一个医学专家，你需要根据用户的问题，给出带有思考的回答。"
-MAX_LENGTH = 768*2
+MAX_LENGTH = 1280
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SWANLAB_ENABLED = bool(os.environ.get("SWANLAB_API_KEY")) or has_api_key()
 
-swanlab.config.update({
-    "model": "Qwen/Qwen3-0.6B",
-    "prompt": PROMPT,
-    "data_max_length": MAX_LENGTH,
-    })
+if SWANLAB_ENABLED:
+    swanlab.config.update({
+        "model": "Qwen/Qwen3-0.6B",
+        "prompt": PROMPT,
+        "data_max_length": MAX_LENGTH,
+        })
+else:
+    print("INFO: SWANLAB_API_KEY not set, SwanLab cloud logging disabled.")
 
 def dataset_jsonl_transfer(origin_path, new_path):
     """
@@ -25,7 +31,7 @@ def dataset_jsonl_transfer(origin_path, new_path):
     messages = []
 
     # 读取旧的JSONL文件
-    with open(origin_path, "r") as file:
+    with open(origin_path, "r", encoding="utf-8") as file:
         for line in file:
             # 解析每一行的json数据
             data = json.loads(line)
@@ -93,8 +99,8 @@ def predict(messages, model, tokenizer):
 model_dir = snapshot_download("Qwen/Qwen3-0.6B", cache_dir="./", revision="master")
 
 # Transformers加载模型权重
-tokenizer = AutoTokenizer.from_pretrained("./Qwen/Qwen3-0.6B", use_fast=False, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained("./Qwen/Qwen3-0.6B", device_map="auto", torch_dtype=torch.bfloat16)
+tokenizer = AutoTokenizer.from_pretrained("./Qwen/Qwen3-0___6B", use_fast=False, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained("./Qwen/Qwen3-0___6B", device_map="auto", torch_dtype=torch.bfloat16)
 model.enable_input_require_grads()  # 开启梯度检查点时，要执行该方法
 
 # 配置lora
@@ -110,11 +116,11 @@ config = LoraConfig(
 model = get_peft_model(model, config)
 
 # 加载、处理数据集和测试集
-train_dataset_path = "train.jsonl"
-test_dataset_path = "val.jsonl"
+train_dataset_path = os.path.join(SCRIPT_DIR, "train.jsonl")
+test_dataset_path = os.path.join(SCRIPT_DIR, "val.jsonl")
 
-train_jsonl_new_path = "train_format.jsonl"
-test_jsonl_new_path = "val_format.jsonl"
+train_jsonl_new_path = os.path.join(SCRIPT_DIR, "train_format.jsonl")
+test_jsonl_new_path = os.path.join(SCRIPT_DIR, "val_format.jsonl")
 
 if not os.path.exists(train_jsonl_new_path):
     dataset_jsonl_transfer(train_dataset_path, train_jsonl_new_path)
@@ -144,7 +150,7 @@ args = TrainingArguments(
     learning_rate=1e-4,
     save_on_each_node=True,
     gradient_checkpointing=True,
-    report_to="swanlab",
+    report_to="swanlab" if SWANLAB_ENABLED else "none",
     run_name="Qwen3-0.6B",
 )
 
@@ -180,9 +186,12 @@ for index, row in test_df.iterrows():
     LLM:{response}
     """
     
-    test_text_list.append(swanlab.Text(response_text))
+    if SWANLAB_ENABLED:
+        test_text_list.append(swanlab.Text(response_text))
     print(response_text)
 
-swanlab.log({"Prediction": test_text_list})
+if SWANLAB_ENABLED:
+    swanlab.log({"Prediction": test_text_list})
 
-swanlab.finish()
+if SWANLAB_ENABLED:
+    swanlab.finish()
